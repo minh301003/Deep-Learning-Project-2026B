@@ -1,0 +1,6 @@
+# Kaggle/Colab đã có sẵn torch và torchvision; torch >= 2.3 (cần torch.amp.GradScaler("cuda", ...)).
+torch>=2.3
+torchvision>=0.18
+numpy
+pandas
+matplotlib
