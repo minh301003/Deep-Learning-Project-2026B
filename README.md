@@ -25,11 +25,11 @@ analysis/         do aggregate.py sinh: experiment_log.csv, tables/, figures/, c
 ## Chạy một notebook (thành viên chạy máy)
 
 1. Kaggle → import notebook từ repo → bật GPU **T4** (không chọn P100) và Internet.
-2. Sửa `OWNER` (và `SEEDS` nếu được dặn chia theo seed), `REPO_URL`, `COMMIT` do điều phối cung cấp. Không sửa gì khác.
+2. Sửa `OWNER` (và `SEEDS` nếu được dặn chia theo seed). Không sửa gì khác.
 3. *Save & Run All*. Cuối notebook in bảng tóm tắt (đọc kỹ nếu có lượt `crashed`/`diverged`) và tạo `<notebook>_<OWNER>.zip`.
 4. Gửi file `.zip` cho điều phối.
 
-Notebook `git clone` repo (phải public) rồi `git checkout <COMMIT>`; commit được ghi vào `runs.csv`.
+Notebook `git clone` repo (phải public) ở tag `v1` (điều phối tạo tag bằng `git tag v1 && git push origin v1` trước khi mọi người chạy); hash commit được `btl.init()` đọc tự động và ghi vào `runs.csv`.
 
 ## Tổng hợp kết quả (điều phối)
 
