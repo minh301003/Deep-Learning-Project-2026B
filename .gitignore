@@ -7,3 +7,6 @@ __pycache__/
 .ipynb_checkpoints/
 docs/
 plans/
+archive/
+results/
+analysis/

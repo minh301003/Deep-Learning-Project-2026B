@@ -19,19 +19,18 @@ btl.py            toàn bộ code huấn luyện (dữ liệu, mô hình, optimi
 aggregate.py      gộp log -> bảng, hình, checks.md
 notebooks/        4 notebook mỏng, chỉ cấu hình + vòng chạy (xóa output trước khi commit)
 results/<tên>/    kết quả nhận từ thành viên: runs.csv, epochs.csv, (steps.csv, d1.csv)   [commit]
-analysis/         do aggregate.py sinh: experiment_log.csv, tables/, figures/, checks.md  [commit]
+analysis/         do aggregate.py sinh: experiment_log.csv, tables/, figures/
 ```
 
-## Chạy một notebook (thành viên chạy máy)
+## Hướng dẫn cách chạy
 
 1. Kaggle → import notebook từ repo → bật GPU **T4** (không chọn P100) và Internet.
-2. Sửa `OWNER` (và `SEEDS` nếu được dặn chia theo seed). Không sửa gì khác.
-3. *Save & Run All*. Cuối notebook in bảng tóm tắt (đọc kỹ nếu có lượt `crashed`/`diverged`) và tạo `<notebook>_<OWNER>.zip`.
-4. Gửi file `.zip` cho điều phối.
+2. Sửa `OWNER` (optional để lưu lại tên người chạy, `SEED` để nguyên là 0 và 1)
+3. *Save & Run All*.
+4. Lưu lại file `.zip` kết quả.
 
-Notebook `git clone` repo (phải public) ở tag `v1` (điều phối tạo tag bằng `git tag v1 && git push origin v1` trước khi mọi người chạy); hash commit được `btl.init()` đọc tự động và ghi vào `runs.csv`.
 
-## Tổng hợp kết quả (điều phối)
+## Tổng hợp kết quả 
 
 ```bash
 pip install -r requirements.txt
@@ -41,23 +40,13 @@ python aggregate.py
 
 `aggregate.py` đọc mọi `results/**/runs.csv` và ghi vào `analysis/`:
 `experiment_log.csv` (nhật ký thí nghiệm nộp theo đề), `tables/` (csv + md), `figures/` (PNG), `checks.md`
-(đủ lượt, tái lập, môi trường, cảnh báo "không học"). Mọi số trong báo cáo lấy từ các file này.
-
-## Tái lập
-
-Cùng commit, cùng seed, cùng loại GPU (T4) và cùng `NUM_WORKERS` (hằng số trong `btl.py`) thì cho cùng kết quả:
-`E1-sgdm-rerun` phải trùng `E1-sgdm` seed 0, và cấu hình "SGDm, lr 0.1, cosine, BN, batch 128" xuất hiện ở
-E1-sgdm, E2-cos, E4-bn-b128. `checks.md` so các nhóm này. AMP fp16 và cuDNN có thể làm số lệch giữa các loại GPU.
 
 ## Quy tắc nhiễu
 
 Mỗi cấu hình có 2 seed; báo cáo mean ± std (`ddof=1`). Hai cấu hình khác nhau **rõ** khi `|Δ mean| ≥ 2σ_Δ` và Δ cùng dấu ở cả hai seed
-(σ_Δ lấy từ σ_pooled của nhóm); ngược lại **trong nhiễu**. Đây là quy tắc sàng lọc, không phải kiểm định thống kê chính thức.
+(σ_Δ lấy từ σ_pooled của nhóm); ngược lại **trong nhiễu**.
 
-## Nguồn tham khảo và phần tự viết
+## Nguồn tham khảo
 
 - Kiến trúc ResNet kiểu CIFAR (BasicBlock, stem conv3×3, không maxpool): theo [kuangliu/pytorch-cifar](https://github.com/kuangliu/pytorch-cifar), viết lại gọn.
 - Dropout trong block: theo Wide-ResNet (Zagoruyko & Komodakis, 2016).
-- Tự viết: toàn bộ `btl.py` (chia dữ liệu phân tầng, lịch LR theo bước, vòng huấn luyện, early stopping hậu kiểm, ghi log, chẩn đoán D1),
-  `aggregate.py`, và các notebook.
-- Công cụ AI: xem mục "Khai báo sử dụng công cụ AI" cuối báo cáo.

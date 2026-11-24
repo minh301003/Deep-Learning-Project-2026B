@@ -1,10 +1,6 @@
-"""BTL Học sâu - Đề tài 3: khảo sát kỹ thuật tối ưu hóa khi huấn luyện ResNet-18 nhỏ trên CIFAR-10.
-
-Toàn bộ code huấn luyện nằm trong file này, đọc từ trên xuống:
-config -> khởi tạo/seed -> dữ liệu -> mô hình -> optimizer/LR -> huấn luyện -> run() -> chỉ số -> D1.
-
+"""
 Mã tham khảo: kiến trúc ResNet kiểu CIFAR theo kuangliu/pytorch-cifar (BasicBlock, stem conv3x3,
-không maxpool); dropout trong block theo Wide-ResNet (Zagoruyko & Komodakis, 2016). Phần còn lại tự viết.
+không maxpool); dropout trong block theo Wide-ResNet (Zagoruyko & Komodakis, 2016).
 """
 import os
 
@@ -29,19 +25,19 @@ import torchvision
 import torchvision.transforms as T
 from torch.utils.data import DataLoader, Subset
 
-# ----------------------------------------------------------------------------------------------
+
 # 1. Hằng số và config
-# ----------------------------------------------------------------------------------------------
-SPLIT_SEED = 2025            # chỉ dùng để chia train/val
-NUM_WORKERS = 2              # cố định cho mọi lượt (chốt sau Phase 0); chỉ tái lập khi giống nhau
+SPLIT_SEED = 2025            # chỉ dùng để chia train/val dataset
+NUM_WORKERS = 2              
 EVAL_BATCH = 1000
 ES_PATIENCE = 5
 CIFAR_MEAN, CIFAR_STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
-OUT_DIR, OWNER, COMMIT, DATA_DIR = "outputs", "unknown", "unknown", "data"   # đặt bởi init()
+OUT_DIR, OWNER, COMMIT, DATA_DIR = "outputs", "unknown", "unknown", "data"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-AMP = DEVICE == "cuda"       # AMP fp16 chỉ bật khi có CUDA
+AMP = DEVICE == "cuda"       
 
+# Config mặc định
 DEFAULTS = dict(
     width=32, norm="bn", dropout=0.0,
     optimizer="sgdm", lr=0.1, weight_decay=5e-4,
@@ -65,18 +61,17 @@ RESULT_COLUMNS = ["final_test_acc", "final_val_acc", "final_train_loss", "gen_ga
 
 
 def make_cfg(overrides: dict) -> dict:
-    """DEFAULTS + overrides; KeyError nếu khóa lạ (bắt lỗi gõ sai)."""
+    """Overidde config for training"""
     unknown = set(overrides) - set(DEFAULTS)
     if unknown:
         raise KeyError(f"Khóa cấu hình không hợp lệ: {sorted(unknown)}")
     return {**DEFAULTS, **overrides}
 
 
-# ----------------------------------------------------------------------------------------------
-# 2. Khởi tạo và tái lập
-# ----------------------------------------------------------------------------------------------
+# 2. Các hàm khởi tạo
 def init(owner: str, out_dir: str = "outputs", data_dir: str = "data") -> None:
-    """Gán biến toàn cục, tạo thư mục, lấy commit, in thông tin thiết bị."""
+    """Hàm khởi tạo để lưu kết quả chạy thí nghiệm, thu thập tên người chạy thí nghiệm 
+    (owner, folder kết quả, folder data và commit hash của code sử dụng)"""
     global OWNER, OUT_DIR, DATA_DIR, COMMIT
     OWNER, OUT_DIR, DATA_DIR = owner, out_dir, data_dir
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -103,9 +98,8 @@ def set_seed(seed: int) -> None:
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-# ----------------------------------------------------------------------------------------------
-# 3. Dữ liệu
-# ----------------------------------------------------------------------------------------------
+
+# 3. Các hàm data loader và chia dữ liệu
 def split_indices(labels):
     """Chia phân tầng, tất định: trả (train_idx, val_idx, train_eval_idx) = 45k / 5k / 5k chỉ số."""
     labels = np.asarray(labels)
@@ -157,13 +151,13 @@ def make_loaders(cfg: dict, seed: int, quick: bool = False) -> dict:
     return loaders
 
 
-# ----------------------------------------------------------------------------------------------
-# 4. Mô hình
-# ----------------------------------------------------------------------------------------------
+
+# 4. Các hàm implement mô hình Resnet18
 def make_norm(kind: str, channels: int) -> nn.Module:
-    """bn: BatchNorm2d. ln: GroupNorm(1, C) = LayerNorm cho CNN (thống kê trên (C,H,W) từng ảnh), giữ
-    gamma/beta theo kênh như BN/GN (nn.LayerNorm([C,H,W]) sẽ có gamma/beta theo từng vị trí không gian).
-    gn: GroupNorm(8, C) (8 nhóm vì stage đầu chỉ có 32 kênh; 32 nhóm sẽ thành InstanceNorm)."""
+    """bn: BatchNorm2d. 
+       ln: GroupNorm(1, C) = LayerNorm cho CNN (thống kê trên (C,H,W) từng ảnh), giữ
+       gamma/beta theo kênh như BN/GN (nn.LayerNorm([C,H,W]) sẽ có gamma/beta theo từng vị trí không gian).
+       gn: GroupNorm(8, C) (8 nhóm vì stage đầu chỉ có 32 kênh)."""
     if kind == "bn":
         return nn.BatchNorm2d(channels)
     if kind == "ln":
@@ -214,11 +208,9 @@ class ResNet18(nn.Module):
         return self.fc(torch.flatten(F.adaptive_avg_pool2d(x, 1), 1))
 
 
-# ----------------------------------------------------------------------------------------------
-# 5. Optimizer và lịch LR
-# ----------------------------------------------------------------------------------------------
+# 5. Optimizer và learning rate schedules.
 def make_optimizer(model, cfg):
-    """Mọi loại dùng lr và weight_decay từ cfg, áp cho mọi tham số."""
+    """Set up optimizer và learning rate từ config."""
     kw = dict(lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     name, p = cfg["optimizer"], model.parameters()
     if name == "sgd":
@@ -237,7 +229,7 @@ def make_optimizer(model, cfg):
 
 
 def lr_at(step: int, cfg: dict, steps_per_epoch: int) -> float:
-    """LR tại bước `step` ∈ [0, total). Hàm thuần."""
+    """LR tại bước `step` ∈ [0, total)"""
     total = cfg["epochs"] * steps_per_epoch
     warm = cfg["warmup_epochs"] * steps_per_epoch
     if step < warm:
@@ -254,11 +246,9 @@ def lr_at(step: int, cfg: dict, steps_per_epoch: int) -> float:
     return cfg["lr"] * f
 
 
-# ----------------------------------------------------------------------------------------------
-# 6. Huấn luyện
-# ----------------------------------------------------------------------------------------------
+# 6. Training model
 def train_epoch(model, loader, optimizer, scaler, cfg, step0, spe):
-    """Một epoch. Trả (step_losses [spe], step_lrs [spe], train_acc %)."""
+    """Train model trong một epoch. Trả (step_losses [spe], step_lrs [spe], train_acc %)."""
     model.train()
     loss_buf, lrs, correct, seen = [], [], torch.zeros((), device=DEVICE), 0
     for k, (x, y) in enumerate(loader):
@@ -296,9 +286,8 @@ def evaluate(model, loader):
     return total_loss.item() / n, 100.0 * correct.item() / n
 
 
-# ----------------------------------------------------------------------------------------------
+
 # 7. Chỉ số
-# ----------------------------------------------------------------------------------------------
 def early_stopping(val_losses, patience: int = ES_PATIENCE):
     """Early stopping hậu kiểm theo val loss. Trả (stop_epoch, best_epoch), đánh số từ 1."""
     best, best_epoch, wait = float("inf"), 1, 0
@@ -322,22 +311,34 @@ def summarize(history: list) -> dict:
                 es_stop_epoch=stop, test_acc_at_es=history[best - 1]["test_acc"])
 
 
-# ----------------------------------------------------------------------------------------------
-# 8. Điều phối một lượt
-# ----------------------------------------------------------------------------------------------
+
+# 8. Hàm run() để chạy toàn bộ pipeline training
+
 def _append_csv(df: pd.DataFrame, name: str) -> None:
     path = os.path.join(OUT_DIR, name)
     df.to_csv(path, mode="a", header=not os.path.exists(path), index=False)
 
 
+def save_checkpoint(model, name: str, seed: int, tag: str, cfg: dict, epoch: int, h: dict) -> str:
+    """Lưu state_dict + metadata vào OUT_DIR/checkpoints/<name>_s<seed>_<tag>.pt (tag: 'last' | 'best')."""
+    d = os.path.join(OUT_DIR, "checkpoints")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{name}_s{seed}_{tag}.pt")
+    torch.save(dict(model_state=model.state_dict(), config=name, seed=seed, cfg=cfg, epoch=epoch,
+                    val_loss=h["val_loss"], val_acc=h["val_acc"], test_acc=h["test_acc"]), path)
+    return path
+
+
 def run(name: str, seed: int, quick: bool = False, log_steps: bool = False, **overrides):
-    """Chạy một lượt (config, seed). Trả (row, model); model là None nếu lượt không completed."""
+    """Chạy một lượt (config, seed). Trả (row, model); model là None nếu lượt không completed.
+    Khi không quick, lưu checkpoint: bản val_loss thấp nhất (_best.pt) và bản epoch cuối (_last.pt)."""
     cfg = make_cfg(overrides)            # ngoài try: lỗi cấu hình phải báo ngay, không thành 'crashed'
     if quick:
         cfg["epochs"] = 2
     start_time = datetime.now().isoformat(timespec="seconds")
     t0 = time.time()
     status, notes, history, step_rows, model = "completed", "", [], [], None
+    best_val = float("inf")
     results = {c: float("nan") for c in RESULT_COLUMNS}
     try:
         set_seed(seed)
@@ -366,6 +367,9 @@ def run(name: str, seed: int, quick: bool = False, log_steps: bool = False, **ov
                 h["train_eval_loss"], h["train_eval_acc"] = evaluate(model, loaders["train_eval"])
             h["epoch_time_s"] = time.time() - te
             history.append(h)
+            if not quick and h["val_loss"] < best_val:
+                best_val = h["val_loss"]
+                save_checkpoint(model, name, seed, "best", cfg, epoch, h)
             if log_steps:
                 step_rows += [(name, seed, step0 + i, lrs[i], float(losses[i])) for i in range(spe)]
             print(f"[{name} s{seed}] ep {epoch:2d}/{cfg['epochs']} lr {h['lr']:.4g} "
@@ -373,6 +377,8 @@ def run(name: str, seed: int, quick: bool = False, log_steps: bool = False, **ov
                   f"test {h['test_acc']:.2f}% ({h['epoch_time_s']:.0f}s)")
         if status == "completed":
             results = summarize(history)
+            if not quick:
+                save_checkpoint(model, name, seed, "last", cfg, cfg["epochs"], history[-1])
     except Exception:
         tb = traceback.format_exc()
         status, notes, model = "crashed", tb[-300:], None        # KHÔNG raise: chạy tiếp lượt sau
@@ -392,9 +398,8 @@ def run(name: str, seed: int, quick: bool = False, log_steps: bool = False, **ov
     return row, model
 
 
-# ----------------------------------------------------------------------------------------------
+
 # 9. Chẩn đoán D1 (chỉ notebook 04): nhiễu thống kê batch của BN theo kích thước batch
-# ----------------------------------------------------------------------------------------------
 @torch.no_grad()
 def bn_noise(model, batch_sizes=(2, 4, 8, 16, 32, 64, 128), n_batches=200, seed=0) -> pd.DataFrame:
     """Với mỗi B, đo sai lệch của mean/var theo kênh tính từ B ảnh so với thống kê trên cả 5k ảnh.
@@ -446,11 +451,10 @@ def bn_noise(model, batch_sizes=(2, 4, 8, 16, 32, 64, 128), n_batches=200, seed=
     return pd.DataFrame(rows)
 
 
-# ----------------------------------------------------------------------------------------------
-# 10. Tiện ích cho notebook
-# ----------------------------------------------------------------------------------------------
+
+# 10. Hàm tiện ích
 def zip_outputs(notebook: str) -> str:
-    """Nén OUT_DIR thành '<notebook>_<OWNER>.zip' và in đường dẫn."""
+    """Nén OUT_DIR thành '<notebook>_<OWNER>.zip' và in đường dẫn từ notebook kaggle"""
     base = f"{notebook}_{OWNER}".replace(" ", "_")
     path = shutil.make_archive(base, "zip", OUT_DIR)
     print("Đã nén kết quả:", os.path.abspath(path))

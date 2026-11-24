@@ -1,4 +1,4 @@
-"""Gộp log từ results/**/ -> analysis/: experiment_log.csv, tables/, figures/, checks.md.
+"""Gộp log từ results/**/ -> analysis/: experiment_log.csv, tables/, figures/, <E1..E4>/.
 
 Chạy từ thư mục gốc:  python aggregate.py
 Mọi bảng/hình/số trong báo cáo phải lấy từ đầu ra của file này.
@@ -31,9 +31,8 @@ E3 = ["E3-R0", "E3-R1-wd", "E3-R2-do0.1", "E3-R3-do0.3", "E3-R4-do0.5", "E3-R5-f
       "E3-R7-jitter", "E3-R8-augall", "E3-C-combined"]
 NORMS, BATCHES = ["bn", "ln", "gn"], [8, 32, 128]
 E4 = [f"E4-{n}-b{b}" for n in NORMS for b in BATCHES]
-ORDER = E1 + ["E1-sgdm-rerun"] + E2 + E3 + E4
-EXPECTED_RUNS = {"E1": 13, "E2": 12, "E3": 20, "E4": 18}
-SEEDS = [0, 1]
+ORDER = E1 + E2 + E3 + E4
+EXPERIMENTS = {"E1": E1, "E2": E2, "E3": E3, "E4": E4}
 
 # Bảng màu phân loại (thứ tự cố định, theo skill dataviz): xanh dương, cam, aqua, vàng, hồng, xanh lá
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
@@ -48,9 +47,8 @@ plt.rcParams.update({
 })
 
 
-# ----------------------------------------------------------------------------------------------
+
 # Đọc dữ liệu
-# ----------------------------------------------------------------------------------------------
 def _read(name: str) -> pd.DataFrame:
     frames = []
     for f in sorted(glob.glob(f"{RESULTS}/**/{name}", recursive=True)):
@@ -76,14 +74,13 @@ def load():
 
 
 def valid(runs: pd.DataFrame) -> pd.DataFrame:
-    """Lượt completed, bỏ lượt lặp (-rerun), mỗi (config, seed) một dòng (bản mới nhất)."""
+    """Lượt completed (bỏ mọi config có hậu tố -rerun), mỗi (config, seed) một dòng (bản mới nhất)."""
     v = runs[(runs.status == "completed") & ~runs.config.str.endswith("-rerun")]
     return v.drop_duplicates(["config", "seed"], keep="last")
 
 
-# ----------------------------------------------------------------------------------------------
+
 # Thống kê và quy tắc nhiễu
-# ----------------------------------------------------------------------------------------------
 def summarize(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     """Theo cấu hình: n, mean, std (ddof=1), vals {seed: giá trị}."""
     rows = []
@@ -142,9 +139,8 @@ def compare(summ: pd.DataFrame, sigma: dict, a: str, b: str) -> dict:
     return dict(a=a, b=b, **r)
 
 
-# ----------------------------------------------------------------------------------------------
+
 # Bảng
-# ----------------------------------------------------------------------------------------------
 def _md(df: pd.DataFrame, digits: int = 2) -> str:
     cols = list(df.columns)
     fmt = lambda x: (f"{x:.{digits}f}" if isinstance(x, (float, np.floating)) and not np.isnan(x)
@@ -355,7 +351,7 @@ def fig_e4(v, d1):
 
 
 def d1_slopes(d1) -> pd.DataFrame:
-    """Độ dốc log–log của mean_noise và var_noise theo B (kỳ vọng ≈ −½)."""
+    """Độ dốc log–log của mean_noise và var_noise theo B (kỳ vọng ≈ −1/2)."""
     rows = []
     for layer, g in d1.groupby("layer"):
         g = g.groupby("batch_size")[["mean_noise", "var_noise"]].mean().reset_index()
@@ -366,59 +362,57 @@ def d1_slopes(d1) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ----------------------------------------------------------------------------------------------
-# checks.md
-# ----------------------------------------------------------------------------------------------
-def checks(runs, v) -> str:
-    L = ["# Kiểm tra log\n"]
-    # 1. đủ lượt
-    L.append("## 1. Đủ lượt\n")
-    L.append("| exp | số dòng log | kỳ vọng | completed | diverged | crashed | trạng thái |\n|---|---|---|---|---|---|---|")
-    for e, n in EXPECTED_RUNS.items():
-        g = runs[runs.exp == e]
-        c = {s: int((g.status == s).sum()) for s in ("completed", "diverged", "crashed")}
-        ok = "OK" if len(g) == n and c["completed"] == n else "THIẾU/LỖI"
-        L.append(f"| {e} | {len(g)} | {n} | {c['completed']} | {c['diverged']} | {c['crashed']} | {ok} |")
-    expected = set()
-    for cfg in E1 + E2 + E3 + E4:
-        expected |= {(cfg, s) for s in SEEDS}
-    expected.add(("E1-sgdm-rerun", 0))
-    have = set(map(tuple, runs[runs.status == "completed"][["config", "seed"]].itertuples(index=False, name=None)))
-    missing = sorted(expected - have, key=lambda t: (_rank(t[0]), t[1]))
-    L.append(f"\nLượt chưa có bản completed: {len(missing)}" + ("\n" if not missing else ":\n"))
-    L += [f"- {c} seed {s}" for c, s in missing]
-    bad = runs[runs.status != "completed"]
-    if len(bad):
-        L.append("\nLượt diverged/crashed (giữ nguyên trong log, loại khỏi mean/std):\n")
-        L += [f"- {r.config} seed {r.seed}: {r.status} ({str(r.notes)[-120:]})" for r in bad.itertuples()]
-    dup = runs[runs.status == "completed"].groupby(["config", "seed"]).size()
-    dup = dup[dup > 1]
-    if len(dup):
-        L.append("\nWARN: (config, seed) completed nhiều lần (bảng dùng bản mới nhất): " + ", ".join(f"{c} s{s}" for c, s in dup.index))
-    # 2. tái lập
-    L.append("\n## 2. Tái lập (cùng config_json + seed phải cùng final_test_acc)\n")
-    comp = runs[runs.status == "completed"]
-    found = False
-    for (cj, seed), g in comp.groupby(["config_json", "seed"]):
-        if len(g) > 1:
-            found = True
-            diff = g.final_test_acc.max() - g.final_test_acc.min()
-            L.append(f"- {'PASS' if diff == 0 else 'FAIL'}: {', '.join(g.config)} (seed {seed}): "
-                     f"chênh lệch lớn nhất = {diff:.6g} điểm %")
-            if diff != 0:
-                L.append("  - Nguyên nhân khả dĩ: khác loại GPU, khác num_workers, kernel không tất định. Ghi trong báo cáo, không sửa số.")
-    if not found:
-        L.append("Chưa có nhóm lượt trùng cấu hình để so sánh.")
-    # 3. môi trường
-    L.append("\n## 3. Môi trường\n")
-    for col in ("commit", "gpu_name"):
-        u = sorted(runs[col].astype(str).unique())
-        L.append(f"- {'OK' if len(u) == 1 else 'WARN'}: {col} = {', '.join(u)}")
-    # 4. không học
-    L.append("\n## 4. Cảnh báo 'không học' (completed nhưng val acc ≤ 15%)\n")
-    w = comp[comp.final_val_acc <= 15]
-    L += [f"- WARN: {r.config} seed {r.seed}: val acc {r.final_val_acc:.2f}%" for r in w.itertuples()] or ["Không có."]
-    return "\n".join(L) + "\n"
+# Thư mục riêng cho từng thí nghiệm: analysis/<E1..E4>/{runs.csv, epochs.csv, figures/}
+def fig_loss_grid(ep: pd.DataFrame, cfgs: list, exp: str) -> None:
+    """Lưới: mỗi ô một config; train_loss (xanh) và val_loss (cam) theo epoch.
+    Đường đậm = trung bình các seed, đường mờ = từng seed."""
+    cfgs = [c for c in cfgs if (ep.config == c).any()]
+    if not cfgs:
+        return
+    ncols = min(3, len(cfgs))
+    nrows = int(np.ceil(len(cfgs) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.3 * ncols, 3.2 * nrows), sharex=True, sharey=True, squeeze=False)
+    for ax, c in zip(axes.flat, cfgs):
+        g = ep[ep.config == c]
+        for col, key, lab in ((COLORS[0], "train_loss", "train"), (COLORS[1], "val_loss", "val")):
+            for _, gs in g.groupby("seed"):
+                ax.plot(gs.epoch, gs[key], color=col, lw=0.8, alpha=0.3)
+            m = g.groupby("epoch")[key].mean()
+            ax.plot(m.index, m.values, color=col, lw=2, label=lab)
+        ax.set_title(c[len(exp) + 1:], fontsize=10)
+        ax.set_yscale("log")
+    for ax in axes.flat[len(cfgs):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("Epoch")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Loss")
+    axes[0, 0].legend()
+    fig.suptitle(f"{exp}: train loss và val loss theo epoch (đậm = TB seed, mờ = từng seed)")
+    fig.tight_layout()
+    d = os.path.join(OUT, exp, "figures")
+    os.makedirs(d, exist_ok=True)
+    fig.savefig(os.path.join(d, "loss_curves.png"))
+    plt.close(fig)
+    print(f"  hình {exp}/figures/loss_curves")
+
+
+def per_experiment(runs: pd.DataFrame, epochs: pd.DataFrame) -> None:
+    for exp, cfgs in EXPERIMENTS.items():
+        r = runs[runs.config.isin(cfgs)]
+        if r.empty:
+            continue
+        d = os.path.join(OUT, exp)
+        os.makedirs(d, exist_ok=True)
+        r.drop(columns=["exp"]).to_csv(os.path.join(d, "runs.csv"), index=False)
+        if epochs.empty:
+            continue
+        ep = epochs[epochs.config.isin(cfgs)].copy()
+        ep["_r"] = ep.config.map(_rank)
+        ep = ep.sort_values(["_r", "seed", "epoch"]).drop(columns="_r")
+        ep.to_csv(os.path.join(d, "epochs.csv"), index=False)
+        print(f"  {exp}: {len(r)} lượt, {len(ep)} dòng epoch")
+        fig_loss_grid(ep, cfgs, exp)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -474,9 +468,8 @@ def main():
     fig_e3(v, epochs, comp3, sigma, runs)
     fig_e4(v, d1)
 
-    with open(os.path.join(OUT, "checks.md"), "w", encoding="utf-8") as f:
-        f.write(checks(runs, v))
-    print("Đã ghi analysis/checks.md")
+    print("Theo từng thí nghiệm:")
+    per_experiment(runs, epochs)
 
 
 def _e3_extra(v, summ, comp3):
